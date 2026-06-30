@@ -2,68 +2,94 @@ import streamlit as st
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+import urllib.parse
 
-st.set_page_config(page_title="Kraków Rent Tracker", page_icon="🇵🇱", layout="wide")
+st.set_page_config(page_title="Kraków Aggregator", page_icon="🏢", layout="wide")
+st.title("🏙️ Kraków Multi-Site Rental Aggregator (OLX & Otodom)")
 
-st.title("🏙️ Kraków's Cheapest Apartment Finder")
-st.write("Targeting live data clusters sorted from lowest to highest price.")
+# Insert your ScraperAPI key here
+API_KEY = "8fb5f8c3835d5e75147bc44c0e3da364b00c1dc9"
 
 DISTRICTS = {
-    "Stare Miasto": "stare-miasto",
-    "Grzegórzki": "grzegorzki",
-    "Prądnik Czerwony": "pradnik-czerwony",
-    "Krowodrza": "krowodrza",
-    "Ruczaj / Dębniki": "debniki",
-    "Podgórze": "podgorze"
+    "Stare Miasto": {"olx": "stare-miasto", "otodom": "stare-miasto"},
+    "Grzegórzki": {"olx": "grzegorzki", "otodom": "grzegorzki"},
+    "Prądnik Czerwony": {"olx": "pradnik-czerwony", "otodom": "pradnik-czerwony"},
+    "Krowodrza": {"olx": "krowodrza", "otodom": "krowodrza"},
+    "Ruczaj / Dębniki": {"olx": "debniki", "otodom": "debniki"},
+    "Podgórze": {"olx": "podgorze", "otodom": "podgorze"}
 }
 
-st.sidebar.header("Search Adjustments")
-selected_district = st.sidebar.selectbox("Choose Locality:", list(DISTRICTS.keys()))
-max_budget = st.sidebar.slider("Max Budget (PLN):", 1200, 5000, 2800, step=100)
+selected_district = st.selectbox("Select Kraków Locality:", list(DISTRICTS.keys()))
+max_budget = st.slider("Maximum Price Budget (PLN):", 1200, 6000, 3000, step=100)
 
-def scrape_olx(district_slug):
-    url = f"https://www.olx.pl/nieruchomosci/mieszkania/wynajem/krakow/q-{district_slug}/?search%5Bsort_by%5D=price%3Aasc"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+def proxy_request(target_url):
+    """Routes the request through a proxy to bypass blocks"""
+    payload = {'api_key': API_KEY, 'url': target_url}
+    proxy_url = 'https://api.scraperapi.com/?' + urllib.parse.urlencode(payload)
     try:
-        r = requests.get(url, headers=headers, timeout=5)
-        if r.status_code != 200: return pd.DataFrame()
-        soup = BeautifulSoup(r.text, "html.parser")
-        cards = soup.find_all("div", {"data-cy": "l-card"})
-        
-        extracted = []
-        for c in cards:
-            try:
-                title = c.find("h6").text.strip()
-                price_str = c.find("p", {"data-testid": "ad-price"}).text.strip()
-                price_num = int(''.join(filter(str.isdigit, price_str)))
-                link = "https://www.olx.pl" + c.find("a")["href"]
-                extracted.append({"Title": title, "Price (PLN)": price_num, "Link": link})
-            except: continue
-        return pd.DataFrame(extracted)
+        r = requests.get(proxy_url, timeout=15)
+        return r.text if r.status_code == 200 else None
     except:
-        return pd.DataFrame()
+        return None
 
-if st.button("🔍 Find Cheapest Rentals"):
-    with st.spinner("Filtering live listings..."):
-        df = scrape_olx(DISTRICTS[selected_district])
-        
-        if df.empty:
-            df = pd.DataFrame([
-                {"Title": "Studio flat near Main Square", "Price (PLN)": 2200, "Link": "https://www.olx.pl"},
-                {"Title": "Cozy room in student apartment", "Price (PLN)": 1350, "Link": "https://www.olx.pl"},
-                {"Title": "Modern 1-room flat near tram", "Price (PLN)": 2400, "Link": "https://www.olx.pl"}
-            ])
-            st.caption("⚠️ Displaying structural market baseline due to dynamic host response limits.")
+def fetch_olx(slug):
+    url = f"https://www.olx.pl/nieruchomosci/mieszkania/wynajem/krakow/q-{slug}/?search%5Bsort_by%5D=price%3Aasc"
+    html = proxy_request(url)
+    if not html: return []
+    
+    soup = BeautifulSoup(html, "html.parser")
+    cards = soup.find_all("div", {"data-cy": "l-card"})
+    results = []
+    for c in cards:
+        try:
+            title = c.find("h6").text.strip()
+            price_str = c.find("p", {"data-testid": "ad-price"}).text.strip()
+            price = int(''.join(filter(str.isdigit, price_str)))
+            link = "https://www.olx.pl" + c.find("a")["href"]
+            results.append({"Source": "OLX", "Title": title, "Price (PLN)": price, "Link": link})
+        except: continue
+    return results
 
-        results = df[df["Price (PLN)"] <= max_budget].sort_values("Price (PLN)")
+def fetch_otodom(slug):
+    url = f"https://www.otodom.pl/pl/wyniki/wynajem/mieszkanie/malopolskie/krakow/{slug}"
+    html = proxy_request(url)
+    if not html: return []
+    
+    soup = BeautifulSoup(html, "html.parser")
+    # Otodom structural selector for 2026 rendering layouts
+    listings = soup.find_all("article", {"data-testid": "listing-item"})
+    results = []
+    for item in listings:
+        try:
+            title = item.find("p", {"data-testid": "title"}).text.strip()
+            price_str = item.find("span", {"data-testid": "price"}).text.strip()
+            price = int(''.join(filter(str.isdigit, price_str)))
+            link = "https://www.otodom.pl" + item.find("a")["href"]
+            results.append({"Source": "Otodom", "Title": title, "Price (PLN)": price, "Link": link})
+        except: continue
+    return results
+
+if st.button("🔥 Scan All Platforms Simultaneosly"):
+    with st.spinner("Bypassing anti-bot checks and scanning aggregations..."):
+        slugs = DISTRICTS[selected_district]
         
-        if not results.empty:
-            st.metric("Lowest Price Found", f"{results.iloc[0]['Price (PLN)']} PLN")
-            st.data_editor(
-                results,
-                column_config={"Link": st.column_config.LinkColumn("Listing URL")},
-                hide_index=True,
-                use_container_width=True
-            )
+        # Scrape and bundle data arrays together
+        all_listings = fetch_olx(slugs["olx"]) + fetch_otodom(slugs["otodom"])
+        
+        if all_listings:
+            df = pd.DataFrame(all_listings)
+            # Filter results based on selected budget
+            filtered_df = df[df["Price (PLN)"] <= max_budget].sort_values("Price (PLN)")
+            
+            if not filtered_df.empty:
+                st.success(f"Successfully processed {len(filtered_df)} real-time matches!")
+                st.data_editor(
+                    filtered_df,
+                    column_config={"Link": st.column_config.LinkColumn("Open Listing Detail")},
+                    hide_index=True,
+                    use_container_width=True
+                )
+            else:
+                st.error("No properties located on OLX or Otodom within your budget slider criteria.")
         else:
-            st.error("No properties found within this budget range for the chosen locality.")
+            st.warning("⚠️ High host traffic limits hit. Please retry or adjust target proxy parameters.")
