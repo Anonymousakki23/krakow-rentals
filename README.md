@@ -90,3 +90,7 @@ Then deploy from the `main` branch with `app.py` as the entry point.
 A proxy API key was previously committed to this repository's history. Removing
 it from the current source does not remove it from Git history, so the exposed
 key should be rotated/revoked in the provider dashboard.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
