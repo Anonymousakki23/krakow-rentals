@@ -29,6 +29,7 @@ OTODOM_HTML = """
 def test_parse_price():
     assert parse_price("3 200 zł") == 3200
     assert parse_price("2850zl") == 2850
+    assert parse_price("3 200,50 zł") == 3200
     assert parse_price("no price") is None
     assert parse_price("") is None
 
