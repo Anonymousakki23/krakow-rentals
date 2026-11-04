@@ -6,6 +6,7 @@ Cloud) or as an environment variable. Never commit the real key.
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 import streamlit as st
@@ -60,8 +61,14 @@ if st.button("🔥 Scan OLX and Otodom simultaneously"):
     errors: list[str] = []
 
     with st.spinner("Requesting listings from OLX and Otodom..."):
-        olx_html = fetch_html(olx_search_url(slugs["olx"]), api_key)
-        otodom_html = fetch_html(otodom_search_url(slugs["otodom"]), api_key)
+        # Actually concurrent, matching the button label: the two proxy
+        # calls are independent, so run them in parallel instead of
+        # waiting for OLX before starting Otodom.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            olx_future = pool.submit(fetch_html, olx_search_url(slugs["olx"]), api_key)
+            otodom_future = pool.submit(fetch_html, otodom_search_url(slugs["otodom"]), api_key)
+            olx_html = olx_future.result()
+            otodom_html = otodom_future.result()
 
     listings = []
     if olx_html is None:

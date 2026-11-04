@@ -1,5 +1,7 @@
 # krakow-rentals
 
+[![CI](https://github.com/Anonymousakki23/krakow-rentals/actions/workflows/ci/badge.svg)](https://github.com/Anonymousakki23/krakow-rentals/actions/workflows/ci)
+
 A small Streamlit app that aggregates apartment-rental listings in Kraków from
 OLX and Otodom. Pick a district, set a maximum budget, and scan both platforms
 at once. Results are deduplicated, filtered by price, and shown with direct
@@ -53,12 +55,15 @@ streamlit run app.py
 ## Tests
 
 ```bash
+pip install -r requirements-dev.txt
 pytest
+ruff check .
 ```
 
 The test suite covers price parsing, OLX/Otodom HTML parsing, URL
 normalization, deduplication, and budget filtering. It does not make network
-requests.
+requests. CI runs the same checks on Python 3.11 and 3.12 for every push to
+`main` and every pull request.
 
 ## Project structure
 

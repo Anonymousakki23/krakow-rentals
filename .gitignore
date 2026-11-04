@@ -17,6 +17,7 @@ env/
 !.env.example
 .streamlit/secrets.toml
 .streamlit/secrets.toml.*
+!.streamlit/secrets.toml.example
 
 # Test / tooling caches
 .pytest_cache/

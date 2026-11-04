@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import urllib.parse
 from dataclasses import dataclass
 from typing import Iterable, Optional
@@ -40,17 +41,20 @@ class Listing:
 
 
 def parse_price(text: str) -> Optional[int]:
-    """Extract an integer PLN price from strings like "3 200 zł" or "3200zl".
+    """Extract a whole-PLN price from strings like "3 200 zł" or "3 200,50 zł".
 
-    Returns None when no digits are present.
+    Returns None when no digits are present. Decimal fractions are
+    truncated to whole PLN (the old implementation stripped all
+    non-digits, turning "3 200,50 zł" into 320050).
     """
     if not text:
         return None
-    digits = re.sub(r"\D", "", text)
-    if not digits:
+    cleaned = text.replace("\u00a0", "").replace(" ", "")
+    match = re.search(r"\d+(?:[.,]\d+)?", cleaned)
+    if not match:
         return None
     try:
-        return int(digits)
+        return int(float(match.group(0).replace(",", ".")))
     except ValueError:
         return None
 
@@ -80,23 +84,36 @@ def fetch_html(target_url: str, api_key: str, timeout: int = REQUEST_TIMEOUT) ->
     """Fetch a page through the configured proxy service.
 
     Returns the HTML text, or None when the request fails. Raises ValueError
-    when no API key is configured.
+    when no API key is configured. Transient proxy errors (429 / 5xx)
+    are retried twice with a short backoff.
     """
     if not api_key:
         raise ValueError("SCRAPER_API_KEY is not configured")
     payload = {"api_key": api_key, "url": target_url}
     proxy_url = SCRAPER_API_ENDPOINT + "?" + urllib.parse.urlencode(payload)
-    try:
-        response = requests.get(
-            proxy_url,
-            timeout=timeout,
-            headers={"User-Agent": USER_AGENT},
-        )
-        response.raise_for_status()
-        return response.text
-    except requests.RequestException as exc:
-        logger.warning("Proxy request failed for %s: %s", target_url, exc)
-        return None
+    for attempt in range(3):
+        try:
+            response = requests.get(
+                proxy_url,
+                timeout=timeout,
+                headers={"User-Agent": USER_AGENT},
+            )
+            response.raise_for_status()
+            return response.text
+        except requests.RequestException as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in (429, 500, 502, 503, 504) and attempt < 2:
+                logger.warning(
+                    "Proxy request for %s failed with %s, retrying (%d/2)",
+                    target_url,
+                    status,
+                    attempt + 1,
+                )
+                time.sleep(2**attempt)
+                continue
+            logger.warning("Proxy request failed for %s: %s", target_url, exc)
+            return None
+    return None
 
 
 def parse_olx(html: str) -> list[Listing]:
